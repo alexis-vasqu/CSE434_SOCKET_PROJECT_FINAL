@@ -186,7 +186,18 @@ int main(int argc, char** argv){
     }
 
     // pass-through to manager (e.g., configure-dss)
-    sendto(sock_m, line, strlen(line), 0, (struct sockaddr*)&mgr, sizeof(mgr));
+    sendto(sock_m, line, strlen(line), 0, (struct sockaddr*)&mgr, sizeof(mgr));{
+  struct timeval tv = {1, 0};
+  setsockopt(sock_m, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  struct sockaddr_in src; socklen_t sl = sizeof(src);
+  char resp[2048];
+  ssize_t n = recvfrom(sock_m, resp, sizeof(resp)-1, 0, (struct sockaddr*)&src, &sl);
+  if (n > 0) {
+    resp[n] = 0;
+    printf("%s", resp);
+    fflush(stdout);
+  }
+}
   }
   return 0;
 }

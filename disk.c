@@ -128,38 +128,68 @@ void* listen_c(void* _) {
 }
 
 int main(int argc, char** argv){
-  if(argc!=6){
-    fprintf(stderr,"usage: disk <disk-name> <manager-ip> <manager-port> <m-port> <c-port>\n");
-    return 1;
-  }
-  const char* dname = argv[1]; strncpy(dname_glob,dname,sizeof(dname_glob)-1);
-  const char* mip   = argv[2];
-  int mport_mgr     = atoi(argv[3]);
-  int my_mport      = atoi(argv[4]);
-  int my_cport      = atoi(argv[5]);
+    if(argc!=6){
+        fprintf(stderr,"usage: disk <disk-name> <manager-ip> <manager-port> <my-mport> <my-cport>\n");
+        return 1;
+    }
+    const char* dname     = argv[1];
+    const char* mgr_ip    = argv[2];      // manager IP (often 127.0.0.1 for local demo)
+    int mgr_port          = atoi(argv[3]);
+    int my_mport          = atoi(argv[4]);
+    int my_cport          = atoi(argv[5]);
 
-  sock_m = socket(AF_INET, SOCK_DGRAM, 0);
-  sock_c = socket(AF_INET, SOCK_DGRAM, 0);
-  if(sock_m<0||sock_c<0){ perror("socket"); return 1; }
+    // keep a copy of disk name for logs already used elsewhere
+    strncpy(dname_glob, dname, sizeof(dname_glob)-1);
+    dname_glob[sizeof(dname_glob)-1] = '\0';
 
-  struct sockaddr_in me_m={0}, me_c={0};
-  me_m.sin_family=AF_INET; me_m.sin_addr.s_addr=INADDR_ANY; me_m.sin_port=htons(my_mport);
-  me_c.sin_family=AF_INET; me_c.sin_addr.s_addr=INADDR_ANY; me_c.sin_port=htons(my_cport);
-  if(bind(sock_m,(struct sockaddr*)&me_m,sizeof(me_m))<0){ perror("bind m"); return 1; }
-  if(bind(sock_c,(struct sockaddr*)&me_c,sizeof(me_c))<0){ perror("bind c"); return 1; }
+    // create sockets
+    sock_m = socket(AF_INET, SOCK_DGRAM, 0);
+    sock_c = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_m < 0 || sock_c < 0) { perror("socket"); return 1; }
 
-  memset(&mgr,0,sizeof(mgr));
-  mgr.sin_family=AF_INET; mgr.sin_port=htons(mport_mgr);
-  if(inet_pton(AF_INET,mip,&mgr.sin_addr)!=1){ fprintf(stderr,"bad manager ip\n"); return 1; }
+    // help WSL/Windows fast re-bind
+    int yes = 1;
+    setsockopt(sock_m, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    setsockopt(sock_c, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
-  // register-disk — use 127.0.0.1 for local testing
-  char reg[256];
-  snprintf(reg,sizeof(reg),"register-disk|%s|%s|%d|%d\n", dname, "127.0.0.1", my_mport, my_cport);
-  sendto(sock_m, reg, strlen(reg), 0, (struct sockaddr*)&mgr, sizeof(mgr));
+    // bind local endpoints
+    struct sockaddr_in me_m = {0}, me_c = {0};
+    me_m.sin_family = AF_INET;  me_m.sin_port = htons(my_mport);
+    me_c.sin_family = AF_INET;  me_c.sin_port = htons(my_cport);
 
-  pthread_t tm, tc;
-  pthread_create(&tm,NULL,listen_m,NULL);
-  pthread_create(&tc,NULL,listen_c,NULL);
-  pthread_join(tm,NULL); pthread_join(tc,NULL);
-  return 0;
+    // For local demo (manager IP == 127.0.0.1), bind explicit to loopback.
+    // Other fall back to ANY so it works on multi-host setups
+    if (strcmp(mgr_ip, "127.0.0.1") == 0) {
+        inet_pton(AF_INET, "127.0.0.1", &me_m.sin_addr);
+        inet_pton(AF_INET, "127.0.0.1", &me_c.sin_addr);
+    } else {
+        me_m.sin_addr.s_addr = INADDR_ANY;
+        me_c.sin_addr.s_addr = INADDR_ANY;
+    }
+
+    if (bind(sock_m, (struct sockaddr*)&me_m, sizeof(me_m)) < 0) { perror("bind m"); return 1; }
+    if (bind(sock_c, (struct sockaddr*)&me_c, sizeof(me_c)) < 0) { perror("bind c"); return 1; }
+
+    // manager address
+    memset(&mgr, 0, sizeof(mgr));
+    mgr.sin_family = AF_INET;
+    mgr.sin_port   = htons(mgr_port);
+    if (inet_pton(AF_INET, mgr_ip, &mgr.sin_addr) != 1) {
+        fprintf(stderr, "bad manager ip: %s\n", mgr_ip);
+        return 1;
+    }
+
+    // reg-disk
+    char reg[256];
+    snprintf(reg, sizeof(reg), "register-disk|%s|%s|%d|%d\n",
+             dname, "127.0.0.1", my_mport, my_cport);
+    sendto(sock_m, reg, strlen(reg), 0, (struct sockaddr*)&mgr, sizeof(mgr));
+
+    // start listeners
+    pthread_t tm, tc;
+    pthread_create(&tm, NULL, listen_m, NULL);
+    pthread_create(&tc, NULL, listen_c, NULL);
+    pthread_join(tm, NULL);
+    pthread_join(tc, NULL);
+    return 0;
 }
