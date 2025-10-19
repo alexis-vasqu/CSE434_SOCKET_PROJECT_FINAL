@@ -1,6 +1,8 @@
 // user.c — simple UDP user client for the DSS milestone
 // Build:   gcc -O2 -Wall -Wextra -o user user.c
 // Run:     ./user <user-name> <manager-ip> <manager-port> <m-port> <c-port>
+// threads: none (single-thread read replies and sends commands to manager)
+// I/O: read w short SO_RCVTIMEO to drain bursts from manager reply
 
 #include <stdio.h>
 #include <stdlib.h>

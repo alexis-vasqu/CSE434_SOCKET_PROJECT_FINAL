@@ -2,6 +2,9 @@
 // Accepts both "REGISTER USER ..." and "register-user ..." styles.
 /// Build:   gcc -O2 -Wall -Wextra -o manager manager.c
 // Run:     ./manager <listen_port>
+// threads: none (sinlge-threaded on one UDP socket)
+// flags (safety): g_dss[].copy_in_progress, g_dss[].read_in_progress block 
+// decommission and fail when copy or read are active
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -155,6 +158,9 @@ static int dss_new_slot(void){ for(int i=0;i<MAX_DSS;i++) if(!g_dss[i].used) ret
 static int dss_file_index(DSS *d, const char *fname){ for(int i=0;i<d->files_used;i++) if(strcmp(d->files[i].fname,fname)==0) return i; return -1; }
 static int is_power_of_two(int x){ return x>0 && (x&(x-1))==0; }
 
+// single threaded mgr: one recvfrom() loop
+// no mutex needed
+
 int main(int argc, char **argv){
     nobuf();
     if(argc!=2){ fprintf(stderr,"usage: manager <manager_listen_port>\n"); return 1; }
@@ -276,6 +282,7 @@ if (strcasecmp(tokens[0],"copy")==0){
 
     if (di < 0 || !fname[0] || !owner[0]) { send_line(sock,(struct sockaddr*)&src,slen,"FAILURE"); continue; }
     if (g_dss[di].copy_in_progress) { send_line(sock,(struct sockaddr*)&src,slen,"FAILURE"); continue; }
+    // copy (block decommission/failure/read while copying)
     g_dss[di].copy_in_progress = 1;
 
     for (int k=0;k<g_dss[di].n;k++){
@@ -303,6 +310,7 @@ if (strcasecmp(tokens[0],"copy")==0){
             snprintf(g_dss[di].files[fi].fname,NAME,"%s",fname);
             snprintf(g_dss[di].files[fi].owner,NAME,"%s",owner);
             g_dss[di].files[fi].fsize=atoll(fsize);
+	    // commit (release copy lock and record metadata
             g_dss[di].copy_in_progress=0;
             send_line(sock,(struct sockaddr*)&src,slen,"SUCCESS");
             continue;
@@ -317,6 +325,7 @@ if (strcasecmp(tokens[0],"copy")==0){
             int fi=dss_file_index(&g_dss[di],fname);
             if(fi<0||strcmp(g_dss[di].files[fi].owner,uname)!=0){ send_line(sock,(struct sockaddr*)&src,slen,"FAILURE"); continue; }
             if(g_dss[di].copy_in_progress){ send_line(sock,(struct sockaddr*)&src,slen,"FAILURE"); continue; }
+	    // read (multiple concurrent reads if needed 
             g_dss[di].read_in_progress++;
             for(int k=0;k<g_dss[di].n;k++){
                 int dd=disk_index(g_dss[di].disk_name[k]);
@@ -328,7 +337,9 @@ if (strcasecmp(tokens[0],"copy")==0){
 
         if(strcasecmp(tokens[0],"read-complete")==0){
             char dss_name[NAME]=""; kvget(linecpy,"dss",dss_name,sizeof(dss_name));
-            int di=dss_index(dss_name); if(di>=0&&g_dss[di].read_in_progress>0) g_dss[di].read_in_progress--;
+            int di=dss_index(dss_name); 
+		// read 
+		if(di>=0&&g_dss[di].read_in_progress>0) g_dss[di].read_in_progress--;
             send_line(sock,(struct sockaddr*)&src,slen,"SUCCESS");
             continue;
         }

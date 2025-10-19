@@ -1,6 +1,8 @@
 // disk.c — DSS disk node (UDP). Stores blocks in memory and serves reads.
 // Build: gcc -O2 -Wall -Wextra -pthread -o disk disk.c
 // Run:   ./disk <disk-name> <manager-ip> <manager-port> <my-mport> <my-cport>
+// thread: listen_m():m-port receives/prints manager-channel messages 
+//         listen_c(): c-port handles client data plane (WRITE and READ)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -98,7 +100,11 @@ int main(int argc, char **argv){
     int n=snprintf(reg,sizeof(reg),"REGISTER DISK %s %s %d %d\n",dname,my_ip,my_mport,my_cport);
     if(n<0||n>=(int)sizeof(reg)){ fprintf(stderr,"register line too long\n"); return 1; }
     sendto(sock_m,reg,n,0,(struct sockaddr*)&mgr,sizeof(mgr));
-    pthread_t tm,tc; if(pthread_create(&tm,NULL,listen_m,NULL)!=0){ perror("pthread_create"); return 1; } if(pthread_create(&tc,NULL,listen_c,NULL)!=0){ perror("pthread_create"); return 1; }
+    // back ground threads: 
+		// tm: manager channel printer
+		// tc: cliente channel data plane
+    pthread_t tm,tc; 
+	if(pthread_create(&tm,NULL,listen_m,NULL)!=0){ perror("pthread_create"); return 1; } if(pthread_create(&tc,NULL,listen_c,NULL)!=0){ perror("pthread_create"); return 1; }
     pthread_detach(tm); pthread_detach(tc);
     char cmd[512];
     while(fgets(cmd,sizeof(cmd),stdin)){
